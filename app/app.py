@@ -1,11 +1,11 @@
-"""Flask HTTP 入口：几何档登记 + 标定（反演）+ 正算。"""
+"""Flask HTTP 入口：几何档登记 + 标定（反演）+ 正算 + 耐张段联合标定。"""
 from __future__ import annotations
 
 import os
 
 from flask import Flask, jsonify, request
 
-from . import service
+from . import section, service, validation
 from .catenary import SpanGeometry
 from .errors import CalibrationError, InvalidRequest, SpanConflict, SpanNotFound
 from .storage import SpanStore
@@ -34,6 +34,25 @@ def _resolve_geometry(body: dict, store: SpanStore) -> tuple[SpanGeometry, str]:
         _registered, geometry = store.get(name)
         return geometry, f"span:{name}"
     return _geometry_from_body(body), "inline"
+
+
+def _resolve_section_samples(body: dict,
+                             members: list[tuple[str, SpanGeometry]]) -> dict[str, list[float]]:
+    """耐张段逐档取样：默认按 sample_count 均匀取样；samples 以档名为键给显式点。"""
+    explicit = body.get("samples")
+    if explicit is not None and not isinstance(explicit, dict):
+        raise InvalidRequest("耐张段的 samples 必须是以档名为键、取样点列表为值的对象")
+    explicit = explicit or {}
+    member_names = {name for name, _ in members}
+    for key in explicit:
+        if key not in member_names:
+            raise InvalidRequest(f"samples 指向的档 {key!r} 不在本耐张段成员内")
+    n = body.get("sample_count", service.DEFAULT_SAMPLE_COUNT)
+    return {
+        name: (validation.require_samples(explicit[name], g.span)
+               if name in explicit else service.uniform_samples(g.span, n))
+        for name, g in members
+    }
 
 
 def create_app(data_dir: str | None = None) -> Flask:
@@ -113,6 +132,37 @@ def create_app(data_dir: str | None = None) -> Flask:
         geometry, source = _resolve_geometry(body, store)
         xs = service.resolve_samples(geometry.span, body)
         result = service.forward(geometry, body["H"], xs, geometry_source=source)
+        return jsonify(result)
+
+    # ---- 耐张段联合标定：多档共解一个公共 H ------------------------------
+    @app.post("/calibrate-section")
+    def calibrate_section_route():
+        body = _json_body()
+        names = validation.require_span_name_list(body.get("spans"))
+        members = [(name, store.get(name)[1]) for name in names]
+        geometries = dict(members)
+
+        entries = validation.require_measurement_entries(body.get("measurements"))
+        seen: set[str] = set()
+        measured: list[section.MeasuredSpan] = []
+        for entry in entries:
+            name = validation.require_span_name(entry["span"])
+            if name not in geometries:
+                raise InvalidRequest(
+                    f"测量条目指向的档 {name!r} 不在本耐张段成员内")
+            if name in seen:
+                raise InvalidRequest(f"档 {name!r} 提交了多条测量；每档至多一条")
+            seen.add(name)
+            g = geometries[name]
+            sag = validation.require_positive(entry["measured_sag"], "测量弧垂")
+            x = validation.require_measure_position(entry["measurement_x"], g.span)
+            measured.append(section.MeasuredSpan(
+                name=name, geometry=g, measured_sag=sag, measurement_x=x))
+
+        rtol = validation.require_residual_rtol(
+            body.get("residual_rtol", section.DEFAULT_RESIDUAL_RTOL))
+        xs_by_name = _resolve_section_samples(body, members)
+        result = service.calibrate_section(members, measured, rtol, xs_by_name)
         return jsonify(result)
 
     return app

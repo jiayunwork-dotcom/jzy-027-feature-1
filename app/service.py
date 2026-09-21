@@ -2,15 +2,21 @@
 
 正算与反演必须走同一套双曲关系：反演结果里带“正算再反演”的闭合误差，
 它由已知 H 正算一次、再把算出的弧垂交回反演得到。
+耐张段联合标定同理：公共 H 正算各测量档弧垂、送回联合求解器，必须闭合。
 """
 from __future__ import annotations
 
+import math
+
 from . import catenary as cat
 from . import invert
+from . import section
 from . import validation
 from .catenary import CatenarySolution, SpanGeometry
 
 _DEFAULT_SAMPLE_COUNT = 21
+# 对外可用的默认取样点数（耐张段路由复用）。
+DEFAULT_SAMPLE_COUNT = _DEFAULT_SAMPLE_COUNT
 
 
 def uniform_samples(L: float, n: int) -> list[float]:
@@ -90,3 +96,63 @@ def forward(
     closure = invert.forward_inverse_closure(geometry, sol.H, geometry.span / 2.0)
     result["forward_inverse_closure"] = closure
     return result
+
+
+# ---------------------------------------------------------------------------
+# 耐张段联合标定（独立于单档标定的新增能力，互不影响）
+# ---------------------------------------------------------------------------
+def _finite_or_none(value: float) -> float | None:
+    """区间上界可能无界（等高档 H_max = ∞），JSON 里用 null 表示。"""
+    return value if math.isfinite(value) else None
+
+
+def calibrate_section(
+    members: list[tuple[str, SpanGeometry]],
+    measured: list[section.MeasuredSpan],
+    rtol: float,
+    xs_by_name: dict[str, list[float]],
+) -> dict:
+    """耐张段联合标定：公共 H + 段内每一档的完整曲线 + 逐测量档残差诊断。"""
+    joint = section.calibrate_section(measured, members, rtol)
+    fits_by_name = {f.name: f for f in joint.solution.fits}
+
+    spans_out: list[dict] = []
+    for name, sol in joint.curves:
+        entry = serialize_solution(sol, xs_by_name[name], f"span:{name}")
+        entry["name"] = name
+        fit = fits_by_name.get(name)
+        entry["measured"] = fit is not None
+        if fit is not None:
+            entry["measurement"] = {
+                "x": fit.measurement_x,
+                "measured_sag": fit.measured_sag,
+                "computed_sag": fit.computed_sag,
+                "residual": fit.residual,
+                "tolerance": fit.tolerance,
+                "normalized_residual": fit.normalized_residual,
+                "within_tolerance": fit.within_tolerance,
+                "implied_H": fit.implied_H,
+                "compatible_H_range": [
+                    fit.compatible_H_range[0],
+                    _finite_or_none(fit.compatible_H_range[1]),
+                ],
+            }
+        spans_out.append(entry)
+
+    return {
+        "H": joint.H,
+        "residual_rtol": rtol,
+        "max_normalized_residual": joint.solution.max_abs_normalized_residual,
+        "tension_section": {
+            "spans": [name for name, _ in members],
+            "measured_spans": [m.name for m in measured],
+            "member_count": len(members),
+            "measurement_count": len(measured),
+            "compatible_H_range": [
+                joint.solution.compatible_H_range[0],
+                _finite_or_none(joint.solution.compatible_H_range[1]),
+            ],
+        },
+        "spans": spans_out,
+        "forward_inverse_closure": joint.closure,
+    }

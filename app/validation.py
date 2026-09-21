@@ -78,3 +78,33 @@ def require_sample_count(value) -> int:
     if n != int(n) or int(n) < 2 or int(n) > 10000:
         raise InvalidRequest("sample_count 必须是 [2, 10000] 内的整数")
     return int(n)
+
+
+def require_span_name_list(value) -> list[str]:
+    """耐张段成员档名列表：非空、逐个合法、不得重复。"""
+    if not isinstance(value, list) or len(value) == 0:
+        raise InvalidRequest("spans 必须是非空的档名列表")
+    names = [require_span_name(v) for v in value]
+    if len(set(names)) != len(names):
+        raise InvalidRequest("spans 中存在重复的档名")
+    return names
+
+
+def require_measurement_entries(value) -> list[dict]:
+    """耐张段测量列表：非空，每条必须是指名某档的对象。"""
+    if not isinstance(value, list) or len(value) == 0:
+        raise InvalidRequest("measurements 必须是非空的测量列表")
+    out: list[dict] = []
+    for raw in value:
+        if not isinstance(raw, dict):
+            raise InvalidRequest("measurements 中的每一条都必须是对象")
+        for field in ("span", "measured_sag", "measurement_x"):
+            if field not in raw:
+                raise InvalidRequest(f"测量条目缺少字段：{field}")
+        out.append(raw)
+    return out
+
+
+def require_residual_rtol(value) -> float:
+    """联合标定的残差相对容差：正数（容差 = 该值 × 各档实测弧垂）。"""
+    return require_positive(value, "残差相对容差 residual_rtol")

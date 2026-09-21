@@ -77,3 +77,54 @@ class SagHeightConflict(CalibrationFailed):
         if given_sag is not None:
             details["given_sag"] = given_sag
         super().__init__(message, details=details)
+
+
+class SectionMeasurementBelowMinimum(CalibrationFailed):
+    """耐张段成员档的测量弧垂低于该档自身的可行下限，单档都立不住，段更无从谈起。"""
+
+    error_code = "section_sag_below_minimum"
+
+    def __init__(self, message: str, *, span: str, measured_sag: float,
+                 minimum_feasible_sag: float | None = None) -> None:
+        details: dict = {
+            "reason": "sag_below_minimum",
+            "span": span,
+            "measured_sag": measured_sag,
+        }
+        if minimum_feasible_sag is not None:
+            details["minimum_feasible_sag"] = minimum_feasible_sag
+        super().__init__(message, details=details)
+
+
+class SectionMeasurementsInconsistent(CalibrationFailed):
+    """耐张段内多个测量档的实测数据互相矛盾：不存在让全部残差落入容差的公共 H。"""
+
+    error_code = "section_measurements_inconsistent"
+
+    def __init__(self, message: str, *, conflicting_spans: list[str],
+                 measurements_detail: list[dict]) -> None:
+        details: dict = {
+            "reason": "measurements_inconsistent",
+            "conflicting_spans": conflicting_spans,
+            "measurements": measurements_detail,
+        }
+        super().__init__(message, details=details)
+
+
+class SectionSpanInfeasible(CalibrationFailed):
+    """测量要求的公共水平张力下，段内某档的最低点将落到档外（超出该档可行上限）。"""
+
+    error_code = "section_span_infeasible"
+
+    def __init__(self, message: str, *, span: str, required_H: float,
+                 max_feasible_H: float, infeasible_spans: list[dict],
+                 compatible_H_range: list) -> None:
+        details: dict = {
+            "reason": "span_infeasible_at_tension",
+            "span": span,
+            "required_H": required_H,
+            "max_feasible_H": max_feasible_H,
+            "infeasible_spans": infeasible_spans,
+            "compatible_H_range": compatible_H_range,
+        }
+        super().__init__(message, details=details)
