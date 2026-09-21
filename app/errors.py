@@ -77,3 +77,59 @@ class SagHeightConflict(CalibrationFailed):
         if given_sag is not None:
             details["given_sag"] = given_sag
         super().__init__(message, details=details)
+
+
+class JointCalibrationConflict(CalibrationFailed):
+    """耐张段内多档实测互相矛盾：不存在让所有测量档残差都落在容差内的公共 H。"""
+
+    error_code = "joint_calibration_conflict"
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        required_min_H: float,
+        required_min_by: str,
+        allowed_max_H: float,
+        allowed_max_by: str,
+        measured_H_intervals: dict | None = None,
+    ) -> None:
+        details: dict = {
+            "reason": "joint_calibration_conflict",
+            "required_min_H": required_min_H,
+            "required_min_by": required_min_by,
+            "allowed_max_H": allowed_max_H,
+            "allowed_max_by": allowed_max_by,
+        }
+        if measured_H_intervals is not None:
+            details["measured_span_H_intervals"] = measured_H_intervals
+        super().__init__(message, details=details)
+
+
+class SectionSpanInfeasible(CalibrationFailed):
+    """候选公共水平张力超出某档自身物理可行范围（该张力下最低点落到档外）。"""
+
+    error_code = "section_span_infeasible"
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        span: str,
+        max_feasible_H: float,
+        required_min_H: float | None = None,
+        required_min_by: str | None = None,
+        given_H: float | None = None,
+    ) -> None:
+        details: dict = {
+            "reason": "section_span_infeasible",
+            "span": span,
+            "max_feasible_H": max_feasible_H,
+        }
+        if required_min_H is not None:
+            details["required_min_H"] = required_min_H
+        if required_min_by is not None:
+            details["required_min_by"] = required_min_by
+        if given_H is not None:
+            details["given_H"] = given_H
+        super().__init__(message, details=details)

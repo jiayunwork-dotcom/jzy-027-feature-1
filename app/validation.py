@@ -35,6 +35,14 @@ def require_nonnegative(value, field: str) -> float:
     return f
 
 
+def require_fraction(value, field: str) -> float:
+    """(0, 1) 开区间内的比例量，如联合标定的残差相对容差。"""
+    f = _as_finite_number(value, field)
+    if not 0.0 < f < 1.0:
+        raise InvalidRequest(f"{field} 必须在 (0, 1) 开区间内，收到 {f:g}")
+    return f
+
+
 def require_height_difference(value, field: str = "两端高差") -> float:
     """高差允许带符号、允许为 0；只要求有限。"""
     return _as_finite_number(value, field)

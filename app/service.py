@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from . import catenary as cat
 from . import invert
+from . import section
 from . import validation
 from .catenary import CatenarySolution, SpanGeometry
 
@@ -90,3 +91,53 @@ def forward(
     closure = invert.forward_inverse_closure(geometry, sol.H, geometry.span / 2.0)
     result["forward_inverse_closure"] = closure
     return result
+
+
+def calibrate_section(
+    members,
+    xs_per_member: list[list[float]],
+    residual_rtol: float,
+) -> dict:
+    """耐张段联合标定：公共 H 联合反演 + 段内每档（含未测量档）曲线铺设。
+
+    每档块复用单档的序列化结构（H/c/lowest_point/cable_length/supports/
+    geometry/curve），测量档另附 measurement（实测/计算弧垂、残差、容差）。
+    """
+    joint = section.calibrate_joint(members, residual_rtol=residual_rtol)
+    spans_out: list[dict] = []
+    max_rel = 0.0
+    for member, sol, xs in zip(joint.members, joint.solutions, xs_per_member):
+        block = serialize_solution(sol, xs, f"span:{member.name}")
+        block["name"] = member.name
+        block["measured"] = member.measurement is not None
+        if member.measurement is not None:
+            meas = member.measurement
+            computed = sol.sag(meas.x)
+            residual = computed - meas.sag
+            tolerance = joint.residual_rtol * meas.sag
+            relative = residual / meas.sag
+            max_rel = max(max_rel, abs(relative))
+            block["measurement"] = {
+                "x": meas.x,
+                "measured_sag": meas.sag,
+                "computed_sag": computed,
+                "residual": residual,
+                "relative_residual": relative,
+                "tolerance": tolerance,
+                "within_tolerance": abs(residual) <= tolerance,
+            }
+        spans_out.append(block)
+
+    return {
+        "H": joint.H,
+        "residual_rtol": joint.residual_rtol,
+        "solution": {
+            "method": "minimax_normalized_residual",
+            "span_count": len(joint.members),
+            "measured_span_count": sum(1 for m in joint.members if m.measurement is not None),
+            "feasible_H_interval": [joint.H_interval[0], joint.H_interval[1]],
+            "max_relative_residual": max_rel,
+            "all_residuals_within_tolerance": max_rel <= joint.residual_rtol,
+        },
+        "spans": spans_out,
+    }
